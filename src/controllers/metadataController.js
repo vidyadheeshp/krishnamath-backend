@@ -1,97 +1,98 @@
 const { randomUUID } = require('crypto');
 
-const { appendAuditLog, readStore, writeStore } = require('../services/storeService');
+const { db, withTransaction } = require('../services/db');
+const repo = require('../services/repository');
+const { HttpError } = require('../utils/httpError');
 const { sendResponse } = require('../utils/response');
 
-const getMetadata = async (req, res, next) => {
-  try {
-    const { type } = req.params;
-    const store = await readStore();
-    const collection = store.metadata[type];
-
-    if (!collection) {
-      return sendResponse(res, 404, 'Metadata type not found', null, [type]);
-    }
-
-    return sendResponse(res, 200, 'Metadata fetched successfully', collection);
-  } catch (error) {
-    return next(error);
+const requireType = (type) => {
+  if (!repo.isMetadataType(type)) {
+    throw new HttpError(404, 'Metadata type not found', [type]);
   }
 };
 
-const createMetadata = async (req, res, next) => {
-  try {
-    const { type } = req.params;
-    const store = await readStore();
-    const collection = store.metadata[type];
-
-    if (!collection) {
-      return sendResponse(res, 404, 'Metadata type not found', null, [type]);
-    }
-
-    const name = String(req.body.name || '').trim();
-    if (!name) {
-      return sendResponse(res, 400, 'Name is required', null, ['name']);
-    }
-
-    const duplicate = collection.some((entry) => entry.name.toLowerCase() === name.toLowerCase());
-    if (duplicate) {
-      return sendResponse(res, 409, 'Duplicate metadata value', null, [name]);
-    }
-
-    const item = { id: randomUUID(), name, nameKn: String(req.body.nameKn || '').trim(), enabled: req.body.enabled !== false };
-    collection.push(item);
-    appendAuditLog(store, 'CREATE', type, item, req.user.email);
-    await writeStore(store);
-
-    return sendResponse(res, 201, 'Metadata created successfully', item);
-  } catch (error) {
-    return next(error);
-  }
+const getMetadata = async (req, res) => {
+  const { type } = req.params;
+  requireType(type);
+  return sendResponse(res, 200, 'Metadata fetched successfully', await repo.listMetadata(db, type));
 };
 
-const updateMetadata = async (req, res, next) => {
-  try {
-    const { id, type } = req.params;
-    const store = await readStore();
-    const collection = store.metadata[type];
-    const item = collection?.find((entry) => entry.id === id);
+const createMetadata = async (req, res) => {
+  const { type } = req.params;
+  requireType(type);
 
-    if (!item) {
-      return sendResponse(res, 404, 'Metadata entry not found', null, [id]);
+  const name = String(req.body.name || '').trim();
+  if (!name) {
+    throw new HttpError(400, 'Name is required', ['name']);
+  }
+
+  const item = await withTransaction(async (client) => {
+    if (await repo.metadataNameExists(client, type, name)) {
+      throw new HttpError(409, 'Duplicate metadata value', [name]);
     }
 
-    item.name = req.body.name ?? item.name;
-    item.nameKn = req.body.nameKn !== undefined ? String(req.body.nameKn).trim() : (item.nameKn || '');
-    item.enabled = req.body.enabled ?? item.enabled;
-    appendAuditLog(store, 'UPDATE', type, item, req.user.email);
-    await writeStore(store);
+    const created = {
+      id: randomUUID(),
+      name,
+      nameKn: String(req.body.nameKn || '').trim(),
+      enabled: req.body.enabled !== false,
+    };
+    await repo.insertMetadata(client, type, created);
+    await repo.insertAuditLog(client, 'CREATE', type, created, req.user.email);
+    return created;
+  });
 
-    return sendResponse(res, 200, 'Metadata updated successfully', item);
-  } catch (error) {
-    return next(error);
-  }
+  return sendResponse(res, 201, 'Metadata created successfully', item);
 };
 
-const deleteMetadata = async (req, res, next) => {
-  try {
-    const { id, type } = req.params;
-    const store = await readStore();
-    const collection = store.metadata[type];
-    const index = collection?.findIndex((entry) => entry.id === id);
+const updateMetadata = async (req, res) => {
+  const { id, type } = req.params;
+  requireType(type);
 
-    if (index === undefined || index < 0) {
-      return sendResponse(res, 404, 'Metadata entry not found', null, [id]);
+  const item = await withTransaction(async (client) => {
+    const existing = await repo.findMetadata(client, type, id, { forUpdate: true });
+
+    if (!existing) {
+      throw new HttpError(404, 'Metadata entry not found', [id]);
     }
 
-    const [removed] = collection.splice(index, 1);
-    appendAuditLog(store, 'DELETE', type, removed, req.user.email);
-    await writeStore(store);
+    const updated = {
+      ...existing,
+      name: req.body.name ?? existing.name,
+      nameKn: req.body.nameKn !== undefined ? String(req.body.nameKn).trim() : existing.nameKn,
+      enabled: req.body.enabled ?? existing.enabled,
+    };
 
-    return sendResponse(res, 200, 'Metadata deleted successfully', removed);
-  } catch (error) {
-    return next(error);
-  }
+    const renamed = updated.name.toLowerCase() !== existing.name.toLowerCase();
+    if (renamed && (await repo.metadataNameExists(client, type, updated.name, id))) {
+      throw new HttpError(409, 'Duplicate metadata value', [updated.name]);
+    }
+
+    await repo.saveMetadata(client, type, updated);
+    await repo.insertAuditLog(client, 'UPDATE', type, updated, req.user.email);
+    return updated;
+  });
+
+  return sendResponse(res, 200, 'Metadata updated successfully', item);
+};
+
+const deleteMetadata = async (req, res) => {
+  const { id, type } = req.params;
+  requireType(type);
+
+  const removed = await withTransaction(async (client) => {
+    const existing = await repo.findMetadata(client, type, id, { forUpdate: true });
+
+    if (!existing) {
+      throw new HttpError(404, 'Metadata entry not found', [id]);
+    }
+
+    await repo.deleteMetadata(client, type, id);
+    await repo.insertAuditLog(client, 'DELETE', type, existing, req.user.email);
+    return existing;
+  });
+
+  return sendResponse(res, 200, 'Metadata deleted successfully', removed);
 };
 
 module.exports = { getMetadata, createMetadata, updateMetadata, deleteMetadata };

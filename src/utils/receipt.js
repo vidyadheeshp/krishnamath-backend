@@ -1,8 +1,8 @@
 const { randomUUID } = require('crypto');
 
-const createReceiptNumber = () => {
+const createReceiptNumber = (prefix = 'TS') => {
   const segment = randomUUID().split('-')[0].toUpperCase();
-  return `TS-${new Date().getFullYear()}-${segment}`;
+  return `${prefix}-${new Date().getFullYear()}-${segment}`;
 };
 
 module.exports = { createReceiptNumber };

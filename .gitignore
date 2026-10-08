@@ -1,0 +1,8 @@
+node_modules/
+.env
+logs/
+*.log
+# Local data exports / DB tooling that must not be committed
+src/data/store.json
+src/data/*.backup
+src/data/krishnamathDB.json

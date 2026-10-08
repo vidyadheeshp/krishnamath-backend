@@ -1,6 +1,10 @@
 const { randomUUID } = require('crypto');
 
-const { appendAuditLog, readStore, writeStore } = require('../services/storeService');
+const { db, withTransaction } = require('../services/db');
+const repo = require('../services/repository');
+const { enrichBooking, getBookingSevaIds, isCancellable } = require('../utils/bookings');
+const { todayInIndia } = require('../utils/dates');
+const { HttpError } = require('../utils/httpError');
 const { createReceiptNumber } = require('../utils/receipt');
 const { sendResponse } = require('../utils/response');
 
@@ -18,77 +22,49 @@ const normalizeSevaIds = (sevaId, sevaIds) => {
   return [...new Set(values.filter(Boolean))];
 };
 
-const getBookingSevaIds = (booking) =>
-  Array.isArray(booking.sevaIds) && booking.sevaIds.length > 0
-    ? booking.sevaIds
-    : booking.sevaId
-      ? [booking.sevaId]
-      : [];
+// Treats undefined, null and an empty string as "not provided".
+const optionalNumber = (value) => (value === undefined || value === null || value === '' ? undefined : Number(value));
 
-const enrichBooking = (booking, store) => {
-  const sevaIds = getBookingSevaIds(booking);
-  const sevas = sevaIds
-    .map((sevaId) => store.sevas.find((entry) => entry.id === sevaId))
-    .filter(Boolean);
+// No bookings are accepted on a blocked date (e.g. Ekadashi, when the sevas are performed at the temple).
+const assertDateOpen = async (client, date) => {
+  const blocked = await repo.findBlockedDate(client, date);
 
-  return {
-    ...booking,
-    sevaId: booking.sevaId || sevaIds[0] || null,
-    sevaIds,
-    seva: sevas[0] || null,
-    sevas,
-  };
-};
-
-const listBookings = async (_req, res, next) => {
-  try {
-    const store = await readStore();
-    return sendResponse(
-      res,
-      200,
-      'Bookings fetched successfully',
-      store.bookings.map((booking) => enrichBooking(booking, store)),
-    );
-  } catch (error) {
-    return next(error);
+  if (blocked) {
+    throw new HttpError(409, `Bookings are closed on ${date}${blocked.reason ? `: ${blocked.reason}` : ''}`, [date]);
   }
 };
 
-const createBooking = async (req, res, next) => {
-  try {
-    const store = await readStore();
-    const selectedSevaIds = normalizeSevaIds(req.body.sevaId, req.body.sevaIds);
+// Loads the selected sevas, failing with 404 if any of them no longer exists.
+const loadSevas = async (client, sevaIds) => {
+  const sevas = await repo.findSevasByIds(client, sevaIds);
 
-    if (selectedSevaIds.length === 0) {
-      return sendResponse(res, 400, 'Select at least one seva', null, ['sevaId']);
-    }
+  if (sevas.length !== sevaIds.length) {
+    const missing = sevaIds.filter((sevaId) => !sevas.some((seva) => seva.id === sevaId));
+    throw new HttpError(404, 'One or more selected sevas were not found', missing);
+  }
 
-    const selectedSevas = selectedSevaIds
-      .map((sevaId) => store.sevas.find((entry) => entry.id === sevaId))
-      .filter(Boolean);
+  return sevas;
+};
 
-    if (selectedSevas.length !== selectedSevaIds.length) {
-      const missingSevas = selectedSevaIds.filter((sevaId) => !selectedSevas.some((seva) => seva.id === sevaId));
-      return sendResponse(res, 404, 'One or more selected sevas were not found', null, missingSevas);
-    }
+const listBookings = async (_req, res) => {
+  const [bookings, sevas] = await Promise.all([repo.listBookings(db), repo.listSevas(db)]);
+  return sendResponse(res, 200, 'Bookings fetched successfully', bookings.map((booking) => enrichBooking(booking, sevas)));
+};
 
-    const slotDate = req.body.bookingDate;
-    const slotTime = req.body.bookingTime;
+const createBooking = async (req, res) => {
+  const selectedSevaIds = normalizeSevaIds(req.body.sevaId, req.body.sevaIds);
 
-    for (const seva of selectedSevas) {
-      const sameSlotBookings = store.bookings.filter((entry) => {
-        if (entry.status === 'cancelled') {
-          return false;
-        }
+  if (selectedSevaIds.length === 0) {
+    throw new HttpError(400, 'Select at least one seva', ['sevaId']);
+  }
 
-        const entrySevaIds = getBookingSevaIds(entry);
-        return entry.bookingDate === slotDate && entry.bookingTime === slotTime && entrySevaIds.includes(seva.id);
-      });
+  const { booking, sevas } = await withTransaction(async (client) => {
+    await assertDateOpen(client, req.body.bookingDate);
+    const selectedSevas = await loadSevas(client, selectedSevaIds);
 
-      if (sameSlotBookings.length >= seva.maxBookingsPerDay) {
-        return sendResponse(res, 409, `Seva capacity reached for ${seva.name} in this slot`, null, [slotDate]);
-      }
-    }
+    const defaultAmountPayable = selectedSevas.reduce((sum, seva) => sum + seva.amount, 0);
+    const amountPayable = optionalNumber(req.body.amountPayable) ?? defaultAmountPayable;
+    const donation = optionalNumber(req.body.donation) ?? 0;
 
     const devotee = {
       id: randomUUID(),
@@ -100,113 +76,149 @@ const createBooking = async (req, res, next) => {
       raashi: req.body.raashi || '',
     };
 
-    const discount = Number(req.body.discount || 0);
-    const defaultAmountPayable = selectedSevas.reduce((sum, seva) => sum + Number(seva.amount || 0), 0);
-    const amountPayable = Number(req.body.amountPayable ?? defaultAmountPayable);
-    const amountCollected = Math.max(amountPayable - discount, 0);
-    const booking = {
+    // Booking time is auto-recorded from the server clock at creation time
+    // rather than chosen by the user.
+    const now = new Date();
+    const newBooking = {
       id: randomUUID(),
       devotee,
       devoteeId: devotee.id,
       sevaId: selectedSevaIds[0],
       sevaIds: selectedSevaIds,
       bookingDate: req.body.bookingDate,
-      bookingTime: req.body.bookingTime,
+      bookingTime: now.toTimeString().slice(0, 5),
       status: req.body.status || 'confirmed',
       paymentMode: req.body.paymentMode,
       paymentReferenceNumber: req.body.paymentReferenceNumber || '',
       amountPayable,
-      discount,
-      amountCollected,
+      donation,
+      // The donation is paid on top of the seva amount.
+      amountCollected: amountPayable + donation,
       notes: req.body.notes || '',
       receiptNumber: createReceiptNumber(),
-      createdAt: new Date().toISOString(),
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+    };
+
+    await repo.insertDevotee(client, devotee);
+    await repo.insertBooking(client, newBooking);
+    await repo.insertNotification(client, {
+      title: 'Booking confirmed',
+      description: `${devotee.name} booked ${selectedSevas.map((seva) => seva.name).join(', ')}`,
+      type: 'booking',
+    });
+    await repo.insertAuditLog(client, 'CREATE', 'booking', newBooking, req.user.email);
+
+    return { booking: newBooking, sevas: selectedSevas };
+  });
+
+  return sendResponse(res, 201, 'Booking created successfully', enrichBooking(booking, sevas));
+};
+
+const updateBooking = async (req, res) => {
+  const { booking, sevas } = await withTransaction(async (client) => {
+    const existing = await repo.findBooking(client, req.params.id, { forUpdate: true });
+
+    if (!existing) {
+      throw new HttpError(404, 'Booking not found', [req.params.id]);
+    }
+
+    if (existing.status === 'cancelled') {
+      throw new HttpError(409, 'A cancelled booking cannot be edited', []);
+    }
+
+    // Once the seva date has passed the booking is frozen: its date cannot be moved (which would otherwise
+    // reopen cancellation).
+    if (req.body.bookingDate && req.body.bookingDate !== existing.bookingDate && existing.bookingDate < todayInIndia()) {
+      throw new HttpError(409, 'The seva date has passed, so the booking date can no longer be changed', [existing.bookingDate]);
+    }
+
+    if (req.body.bookingDate && req.body.bookingDate !== existing.bookingDate) {
+      await assertDateOpen(client, req.body.bookingDate);
+    }
+
+    const sevasProvided = req.body.sevaId !== undefined || req.body.sevaIds !== undefined;
+    const nextSevaIds = sevasProvided ? normalizeSevaIds(req.body.sevaId, req.body.sevaIds) : getBookingSevaIds(existing);
+
+    if (nextSevaIds.length === 0) {
+      throw new HttpError(400, 'Select at least one seva', ['sevaId']);
+    }
+
+    const updated = {
+      ...existing,
+      sevaId: nextSevaIds[0],
+      sevaIds: nextSevaIds,
+      bookingDate: req.body.bookingDate ?? existing.bookingDate,
+      bookingTime: req.body.bookingTime ?? existing.bookingTime,
+      status: req.body.status ?? existing.status,
+      paymentMode: req.body.paymentMode ?? existing.paymentMode,
+      paymentReferenceNumber: req.body.paymentReferenceNumber ?? existing.paymentReferenceNumber,
+      amountPayable: optionalNumber(req.body.amountPayable) ?? existing.amountPayable,
+      donation: optionalNumber(req.body.donation) ?? existing.donation,
+      notes: req.body.notes ?? existing.notes,
       updatedAt: new Date().toISOString(),
     };
 
-    store.devotees.unshift(devotee);
-    store.bookings.unshift(booking);
+    updated.amountCollected = updated.amountPayable + updated.donation;
 
-    const sevaNames = selectedSevas.map((seva) => seva.name);
-    store.notifications.unshift({
-      id: randomUUID(),
-      title: 'Booking confirmed',
-      description: `${devotee.name} booked ${sevaNames.join(', ')}`,
+    const selectedSevas = await loadSevas(client, updated.sevaIds);
+
+    await repo.saveBooking(client, updated);
+    await repo.insertAuditLog(client, 'UPDATE', 'booking', updated, req.user.email);
+
+    return { booking: updated, sevas: selectedSevas };
+  });
+
+  return sendResponse(res, 200, 'Booking updated successfully', enrichBooking(booking, sevas));
+};
+
+// Cancelling keeps the booking (for audit and the receipt) but removes it from every total. It needs a
+// reason, records who cancelled and when, and cannot be undone or repeated.
+const cancelBooking = async (req, res) => {
+  const { booking, sevas } = await withTransaction(async (client) => {
+    const existing = await repo.findBooking(client, req.params.id, { forUpdate: true });
+
+    if (!existing) {
+      throw new HttpError(404, 'Booking not found', [req.params.id]);
+    }
+
+    if (existing.status === 'cancelled') {
+      throw new HttpError(409, 'This booking is already cancelled', []);
+    }
+
+    // Frozen once the seva date has passed (the day of the seva itself is still allowed).
+    if (!isCancellable(existing)) {
+      throw new HttpError(409, `Cancellation is closed: the seva date (${existing.bookingDate}) has passed`, [existing.bookingDate]);
+    }
+
+    const now = new Date().toISOString();
+    const cancelled = {
+      ...existing,
+      status: 'cancelled',
+      cancellationReason: req.body.reason,
+      cancelledAt: now,
+      cancelledBy: req.user.email,
+      updatedAt: now,
+    };
+
+    await repo.saveBooking(client, cancelled);
+    await repo.insertNotification(client, {
+      title: 'Booking cancelled',
+      description: `${existing.devotee?.name ?? 'A booking'} (${existing.receiptNumber}) - ${req.body.reason}`,
       type: 'booking',
-      createdAt: new Date().toISOString(),
     });
-    appendAuditLog(store, 'CREATE', 'booking', booking, req.user.email);
-    await writeStore(store);
+    await repo.insertAuditLog(
+      client,
+      'CANCEL',
+      'booking',
+      { id: existing.id, receiptNumber: existing.receiptNumber, amountCollected: existing.amountCollected, reason: req.body.reason },
+      req.user.email,
+    );
 
-    return sendResponse(res, 201, 'Booking created successfully', enrichBooking(booking, store));
-  } catch (error) {
-    return next(error);
-  }
+    return { booking: cancelled, sevas: await repo.listSevas(client) };
+  });
+
+  return sendResponse(res, 200, 'Booking cancelled successfully', enrichBooking(booking, sevas));
 };
 
-const updateBooking = async (req, res, next) => {
-  try {
-    const store = await readStore();
-    const booking = store.bookings.find((entry) => entry.id === req.params.id);
-
-    if (!booking) {
-      return sendResponse(res, 404, 'Booking not found', null, [req.params.id]);
-    }
-
-    if (req.body.sevaId !== undefined || req.body.sevaIds !== undefined) {
-      const selectedSevaIds = normalizeSevaIds(req.body.sevaId, req.body.sevaIds);
-
-      if (selectedSevaIds.length === 0) {
-        return sendResponse(res, 400, 'Select at least one seva', null, ['sevaId']);
-      }
-
-      const allSevasAvailable = selectedSevaIds.every((sevaId) => store.sevas.some((seva) => seva.id === sevaId));
-      if (!allSevasAvailable) {
-        return sendResponse(res, 404, 'One or more selected sevas were not found', null, selectedSevaIds);
-      }
-
-      booking.sevaId = selectedSevaIds[0];
-      booking.sevaIds = selectedSevaIds;
-    }
-
-    Object.assign(booking, {
-      bookingDate: req.body.bookingDate ?? booking.bookingDate,
-      bookingTime: req.body.bookingTime ?? booking.bookingTime,
-      status: req.body.status ?? booking.status,
-      paymentMode: req.body.paymentMode ?? booking.paymentMode,
-      paymentReferenceNumber: req.body.paymentReferenceNumber ?? booking.paymentReferenceNumber,
-      discount: req.body.discount !== undefined ? Number(req.body.discount) : booking.discount,
-      amountPayable: req.body.amountPayable !== undefined ? Number(req.body.amountPayable) : booking.amountPayable,
-      notes: req.body.notes ?? booking.notes,
-      updatedAt: new Date().toISOString(),
-    });
-    booking.amountCollected = Math.max(booking.amountPayable - booking.discount, 0);
-
-    appendAuditLog(store, 'UPDATE', 'booking', booking, req.user.email);
-    await writeStore(store);
-    return sendResponse(res, 200, 'Booking updated successfully', enrichBooking(booking, store));
-  } catch (error) {
-    return next(error);
-  }
-};
-
-const deleteBooking = async (req, res, next) => {
-  try {
-    const store = await readStore();
-    const booking = store.bookings.find((entry) => entry.id === req.params.id);
-
-    if (!booking) {
-      return sendResponse(res, 404, 'Booking not found', null, [req.params.id]);
-    }
-
-    booking.status = 'cancelled';
-    booking.updatedAt = new Date().toISOString();
-    appendAuditLog(store, 'CANCEL', 'booking', booking, req.user.email);
-    await writeStore(store);
-    return sendResponse(res, 200, 'Booking cancelled successfully', enrichBooking(booking, store));
-  } catch (error) {
-    return next(error);
-  }
-};
-
-module.exports = { listBookings, createBooking, updateBooking, deleteBooking };
+module.exports = { listBookings, createBooking, updateBooking, cancelBooking };

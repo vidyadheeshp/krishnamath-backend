@@ -9,28 +9,33 @@ const apiRouter = require('./routes');
 const { errorHandler, notFoundHandler } = require('./middleware/errorMiddleware');
 
 const app = express();
-const allowedOrigins = Array.from(
-  new Set([
-    env.clientUrl,
-    env.clientUrl.replace('localhost', '127.0.0.1'),
-    env.clientUrl.replace('127.0.0.1', 'localhost'),
-  ]),
+
+// Behind Nginx / a PaaS proxy the real client IP comes from X-Forwarded-For; without this
+// every user shares the proxy's IP and the rate limiters would lock everyone out together.
+if (env.trustProxy) {
+  app.set('trust proxy', /^\d+$/.test(env.trustProxy) ? Number(env.trustProxy) : env.trustProxy);
+}
+
+const allowedOrigins = new Set(
+  env.clientUrls.flatMap((url) => [url, url.replace('localhost', '127.0.0.1'), url.replace('127.0.0.1', 'localhost')]),
 );
 
 app.use(
   cors({
     origin(origin, callback) {
-      if (!origin || allowedOrigins.includes(origin)) {
+      if (!origin || allowedOrigins.has(origin)) {
         return callback(null, true);
       }
 
-      return callback(new Error(`CORS blocked for origin ${origin}`));
+      const error = new Error(`CORS blocked for origin ${origin}`);
+      error.statusCode = 403;
+      return callback(error);
     },
     credentials: true,
   }),
 );
 app.use(helmet());
-app.use(morgan('dev'));
+app.use(morgan(env.isProduction ? 'combined' : 'dev'));
 app.use(
   rateLimit({
     windowMs: 15 * 60 * 1000,
@@ -39,7 +44,7 @@ app.use(
     legacyHeaders: false,
   }),
 );
-app.use(express.json());
+app.use(express.json({ limit: '100kb' }));
 
 app.get('/health', (_req, res) => {
   res.json({ success: true, message: 'Temple API is healthy', data: null, errors: [] });
