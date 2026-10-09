@@ -9,6 +9,7 @@ const financeRoutes = require('./financeRoutes');
 const metadataRoutes = require('./metadataRoutes');
 const receiptRoutes = require('./receiptRoutes');
 const reportRoutes = require('./reportRoutes');
+const sevaListRoutes = require('./sevaListRoutes');
 const sevaRoutes = require('./sevaRoutes');
 const userRoutes = require('./userRoutes');
 const { ROLES } = require('../config/roles');
@@ -30,6 +31,7 @@ router.use('/metadata', authenticate, operations, metadataRoutes);
 router.use('/sevas', authenticate, operations, sevaRoutes);
 router.use('/bookings', authenticate, operations, bookingRoutes);
 router.use('/blocked-dates', authenticate, operations, blockedDateRoutes);
+router.use('/seva-list', authenticate, operations, sevaListRoutes);
 router.use('/expenditures', authenticate, operations, expenditureRoutes);
 router.use('/receipts', authenticate, operations, receiptRoutes);
 

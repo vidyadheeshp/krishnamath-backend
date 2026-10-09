@@ -588,6 +588,24 @@ const saveReceipt = async (db, receipt) => {
   return receipt;
 };
 
+// ------------------------------------------------------------- receipt numbers
+
+// Takes the next number of the current financial year. The counter row is locked by the update, so
+// concurrent receipts are numbered one after another, and because it runs inside the caller's
+// transaction a failed save gives the number back (the series never has gaps).
+const nextReceiptNumber = async (db, now = new Date()) => {
+  const { formatReceiptNumber, currentFinancialYear } = require('../utils/receipt');
+  const financialYear = currentFinancialYear(now);
+  const result = await db.query(
+    `INSERT INTO receipt_counters (financial_year, last_number) VALUES ($1, 1)
+     ON CONFLICT (financial_year) DO UPDATE SET last_number = receipt_counters.last_number + 1
+     RETURNING last_number`,
+    [financialYear],
+  );
+
+  return formatReceiptNumber(financialYear, result.rows[0].last_number);
+};
+
 // --------------------------------------------------------------- blocked dates
 // Calendar dates on which no seva bookings are accepted (e.g. Ekadashi).
 
@@ -736,6 +754,7 @@ module.exports = {
   listAuditLogs,
   insertAuditLog,
   getDashboardTotals,
+  nextReceiptNumber,
   listBlockedDates,
   findBlockedDateById,
   findBlockedDate,

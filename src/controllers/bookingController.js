@@ -5,7 +5,6 @@ const repo = require('../services/repository');
 const { enrichBooking, getBookingSevaIds, isCancellable } = require('../utils/bookings');
 const { todayInIndia } = require('../utils/dates');
 const { HttpError } = require('../utils/httpError');
-const { createReceiptNumber } = require('../utils/receipt');
 const { sendResponse } = require('../utils/response');
 
 const normalizeSevaIds = (sevaId, sevaIds) => {
@@ -62,6 +61,9 @@ const createBooking = async (req, res) => {
     await assertDateOpen(client, req.body.bookingDate);
     const selectedSevas = await loadSevas(client, selectedSevaIds);
 
+    // Taken inside the transaction, so a booking that fails to save never uses up a receipt number.
+    const receiptNumber = await repo.nextReceiptNumber(client);
+
     const defaultAmountPayable = selectedSevas.reduce((sum, seva) => sum + seva.amount, 0);
     const amountPayable = optionalNumber(req.body.amountPayable) ?? defaultAmountPayable;
     const donation = optionalNumber(req.body.donation) ?? 0;
@@ -95,7 +97,7 @@ const createBooking = async (req, res) => {
       // The donation is paid on top of the seva amount.
       amountCollected: amountPayable + donation,
       notes: req.body.notes || '',
-      receiptNumber: createReceiptNumber(),
+      receiptNumber,
       createdAt: now.toISOString(),
       updatedAt: now.toISOString(),
     };

@@ -118,6 +118,11 @@ const updateBlockedDateRules = [
   validate,
 ];
 
+const sevaListRules = [
+  query('day').optional().isIn(['today', 'tomorrow']).withMessage('Day must be today or tomorrow'),
+  validate,
+];
+
 const sevaRules = (isCreate) => [
   text('name', 'Seva name', { required: isCreate, max: 150 }),
   text('nameKn', 'Kannada name', { max: 150 }),
@@ -244,6 +249,7 @@ module.exports = {
   createBookingRules: bookingRules(true),
   updateBookingRules: bookingRules(false),
   cancelBookingRules,
+  sevaListRules,
   listBlockedDatesRules,
   addBlockedDatesRules,
   updateBlockedDateRules,

@@ -2,10 +2,9 @@ const { randomUUID } = require('crypto');
 
 const { db, withTransaction } = require('../services/db');
 const repo = require('../services/repository');
-const { CATEGORIES, CATEGORY_LABELS, RECEIPT_PREFIXES } = require('../config/paymentCategories');
+const { CATEGORIES, CATEGORY_LABELS } = require('../config/paymentCategories');
 const { resolvePeriod } = require('../utils/period');
 const { HttpError } = require('../utils/httpError');
-const { createReceiptNumber } = require('../utils/receipt');
 const { sendResponse } = require('../utils/response');
 
 const listReceipts = async (req, res) => {
@@ -28,7 +27,7 @@ const createReceipt = async (req, res) => {
     paymentMode: req.body.paymentMode,
     paymentReferenceNumber: req.body.paymentReferenceNumber || '',
     notes: req.body.notes || '',
-    receiptNumber: createReceiptNumber(RECEIPT_PREFIXES[category]),
+    receiptNumber: null, // assigned from the financial-year series inside the transaction
     status: 'confirmed',
     createdBy: req.user.email,
     createdAt: now,
@@ -36,6 +35,7 @@ const createReceipt = async (req, res) => {
   };
 
   await withTransaction(async (client) => {
+    receipt.receiptNumber = await repo.nextReceiptNumber(client);
     await repo.insertReceipt(client, receipt);
     await repo.insertNotification(client, {
       title: `${CATEGORY_LABELS[category]} received`,
