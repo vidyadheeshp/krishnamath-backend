@@ -622,6 +622,24 @@ const BLOCKED_COLUMNS = `d.id, d.blocked_date::text AS blocked_date, d.reason, d
   (SELECT COUNT(*) FROM bookings b WHERE b.booking_date = d.blocked_date AND b.status <> 'cancelled') AS active_bookings`;
 
 // from/to are optional (half-open range); without them every blocked date is returned.
+const listPanchangDays = async (db, from, to) => {
+  const result = await db.query(
+    `SELECT to_char(panchang_date, 'YYYY-MM-DD') AS date, details FROM panchang_days
+     WHERE panchang_date >= $1::date AND panchang_date < $2::date ORDER BY panchang_date`,
+    [from, to],
+  );
+  return result.rows;
+};
+
+// A calculated row may be refreshed by a later calculation, but never a row imported from the temple's panchanga.
+const insertPanchangDay = (db, date, details) =>
+  db.query(
+    `INSERT INTO panchang_days (panchang_date, details) VALUES ($1::date, $2)
+     ON CONFLICT (panchang_date) DO UPDATE SET details = EXCLUDED.details, updated_at = now()
+     WHERE panchang_days.source = 'computed'`,
+    [date, JSON.stringify(details)],
+  );
+
 const listBlockedDates = async (db, from = null, to = null) => {
   const result = await db.query(
     `SELECT ${BLOCKED_COLUMNS} FROM blocked_dates d
@@ -755,6 +773,8 @@ module.exports = {
   insertAuditLog,
   getDashboardTotals,
   nextReceiptNumber,
+  listPanchangDays,
+  insertPanchangDay,
   listBlockedDates,
   findBlockedDateById,
   findBlockedDate,

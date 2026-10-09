@@ -1,4 +1,5 @@
 const { db } = require('../services/db');
+const { getPanchang } = require('../services/panchang');
 const repo = require('../services/repository');
 const { enrichBooking } = require('../utils/bookings');
 const { addDays, todayInIndia } = require('../utils/dates');
@@ -13,10 +14,11 @@ const getSevaList = async (req, res) => {
   const day = req.query.day === 'tomorrow' ? 'tomorrow' : 'today';
   const date = dates[day];
 
-  const [bookings, sevas, blocked] = await Promise.all([
+  const [bookings, sevas, blocked, panchang] = await Promise.all([
     repo.listBookingsBetween(db, date, addDays(date, 1)),
     repo.listSevas(db),
     repo.findBlockedDate(db, date),
+    getPanchang(date, addDays(date, 1)).then((days) => days[date]).catch(() => null), // the list works without it
   ]);
 
   const entries = bookings
@@ -51,6 +53,7 @@ const getSevaList = async (req, res) => {
     day,
     date,
     dates,
+    panchang,
     blockedReason: blocked ? blocked.reason || 'Blocked' : null,
     totals: { bookings: entries.length, sevas: entries.reduce((sum, entry) => sum + entry.sevas.length, 0) },
     sevaCounts: [...counts.values()].sort((left, right) => right.count - left.count || left.name.localeCompare(right.name)),

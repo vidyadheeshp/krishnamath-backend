@@ -95,6 +95,12 @@ const cancelBookingRules = [
   validate,
 ];
 
+const panchangRules = [
+  query('from').matches(/^\d{4}-\d{2}-\d{2}$/).withMessage('From date is invalid'),
+  query('to').matches(/^\d{4}-\d{2}-\d{2}$/).withMessage('To date is invalid'),
+  validate,
+];
+
 const listBlockedDatesRules = [
   query('year').optional().isInt({ min: 2000, max: 2100 }).withMessage('Year is invalid'),
   validate,
@@ -250,6 +256,7 @@ module.exports = {
   updateBookingRules: bookingRules(false),
   cancelBookingRules,
   sevaListRules,
+  panchangRules,
   listBlockedDatesRules,
   addBlockedDatesRules,
   updateBlockedDateRules,
