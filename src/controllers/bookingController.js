@@ -2,7 +2,7 @@ const { randomUUID } = require('crypto');
 
 const { db, withTransaction } = require('../services/db');
 const repo = require('../services/repository');
-const { enrichBooking, getBookingSevaIds, isCancellable } = require('../utils/bookings');
+const { cancellationBlock, enrichBooking, getBookingSevaIds, isCancellable } = require('../utils/bookings');
 const { todayInIndia } = require('../utils/dates');
 const { HttpError } = require('../utils/httpError');
 const { sendResponse } = require('../utils/response');
@@ -186,6 +186,11 @@ const cancelBooking = async (req, res) => {
 
     if (existing.status === 'cancelled') {
       throw new HttpError(409, 'This booking is already cancelled', []);
+    }
+
+    // Only cash bookings can be cancelled here; money paid by UPI, cheque etc. is not refunded through the portal.
+    if (cancellationBlock(existing) === 'payment-mode') {
+      throw new HttpError(409, `Only cash bookings can be cancelled; this booking was paid by ${existing.paymentMode}`, [existing.paymentMode]);
     }
 
     // Frozen once the seva date has passed (the day of the seva itself is still allowed).

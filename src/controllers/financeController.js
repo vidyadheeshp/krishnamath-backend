@@ -151,6 +151,9 @@ const getExpenditures = async (req, res) => {
   });
 };
 
+// The file type the person downloaded, for the audit trail (both are built from the same records).
+const exportFormat = (req) => (req.query.format === 'csv' ? 'tally-csv' : 'tally-json');
+
 // Expenditure as flat accounting entries (same four fields as the receipts export), one per expense.
 // Particulars is the expenditure head: Maintenance, Salaries, Daily Expenses, Dakshine and Sambhavane
 // or Donation Paid.
@@ -171,7 +174,7 @@ const getExpenditureExport = async (req, res) => {
     db,
     'EXPORT',
     'finance',
-    { format: 'tally-json', kind: 'expenditure', year: period.year, month: period.month, entries: records.length },
+    { format: exportFormat(req), kind: 'expenditure', year: period.year, month: period.month, entries: records.length },
     req.user.email,
   );
 
@@ -180,7 +183,7 @@ const getExpenditureExport = async (req, res) => {
 
 // Receipts as flat accounting entries for import into Tally / audit files. Each record has exactly:
 //   date (YYYY-MM-DD), particulars (payment category), modeOfPayment, amount.
-// Particulars is one of: Religious Seva, Annadana Seva, Donation, Hundi Collection.
+// Particulars is one of: Religious Seva, Annadana Seva, Donation, Hundi Collection, Sthala Kanike.
 const getTallyExport = async (req, res) => {
   const period = resolvePeriod(req.query);
   const ledger = await loadLedger(period);
@@ -197,7 +200,7 @@ const getTallyExport = async (req, res) => {
     db,
     'EXPORT',
     'finance',
-    { format: 'tally-json', year: period.year, month: period.month, category: req.query.category || null, entries: records.length },
+    { format: exportFormat(req), year: period.year, month: period.month, category: req.query.category || null, entries: records.length },
     req.user.email,
   );
 

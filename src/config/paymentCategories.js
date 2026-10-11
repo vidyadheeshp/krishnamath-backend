@@ -1,10 +1,11 @@
-// The four heads under which every rupee received is accounted. Seva bookings are always
-// "Religious Seva"; the other three are recorded as receipts by the admins.
+// The five heads under which every rupee received is accounted. Seva bookings are always
+// "Religious Seva"; the other four are recorded as receipts by the admins.
 const CATEGORIES = {
   RELIGIOUS_SEVA: 'religious-seva',
   ANNADANA_SEVA: 'annadana-seva',
   DONATION: 'donation',
   HUNDI_COLLECTION: 'hundi-collection',
+  STHALA_KANIKE: 'sthala-kanike',
 };
 
 const CATEGORY_LABELS = {
@@ -12,6 +13,7 @@ const CATEGORY_LABELS = {
   [CATEGORIES.ANNADANA_SEVA]: 'Annadana Seva',
   [CATEGORIES.DONATION]: 'Donation',
   [CATEGORIES.HUNDI_COLLECTION]: 'Hundi Collection',
+  [CATEGORIES.STHALA_KANIKE]: 'Sthala Kanike',
 };
 
 const ALL_CATEGORIES = Object.values(CATEGORIES);
