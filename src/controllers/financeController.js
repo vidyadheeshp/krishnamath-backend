@@ -29,7 +29,7 @@ const groupTotals = (rows, key) =>
     }, {}),
   ).sort((left, right) => right.amount - left.amount);
 
-// The five expenditure heads always appear (zero when unused), followed by any legacy category that
+// The five expense heads always appear (zero when unused), followed by any legacy category that
 // still exists on older records.
 const withAllExpenseCategories = (rows) => {
   const known = EXPENSE_CATEGORIES.map((category) => rows.find((row) => row.category === category) ?? { category, amount: 0, count: 0 });
@@ -142,7 +142,7 @@ const getExpenditures = async (req, res) => {
     }, {}),
   );
 
-  return sendResponse(res, 200, 'Expenditures fetched successfully', {
+  return sendResponse(res, 200, 'Expenses fetched successfully', {
     year: period.year,
     month: period.month,
     total: round2(items.reduce((sum, item) => sum + item.expenseAmount, 0)),
@@ -154,8 +154,8 @@ const getExpenditures = async (req, res) => {
 // The file type the person downloaded, for the audit trail (both are built from the same records).
 const exportFormat = (req) => (req.query.format === 'csv' ? 'tally-csv' : 'tally-json');
 
-// Expenditure as flat accounting entries (same four fields as the receipts export), one per expense.
-// Particulars is the expenditure head: Maintenance, Salaries, Daily Expenses, Dakshine and Sambhavane
+// Expense as flat accounting entries (same four fields as the receipts export), one per expense.
+// Particulars is the expense head: Maintenance, Salaries, Daily Expenses, Dakshine and Sambhavane
 // or Donation Paid.
 const getExpenditureExport = async (req, res) => {
   const period = resolvePeriod(req.query);

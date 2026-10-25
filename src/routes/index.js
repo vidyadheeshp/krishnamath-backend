@@ -26,7 +26,7 @@ router.use('/auth', authRoutes);
 // Super admin: portal configuration and user management.
 router.use('/users', authenticate, authorize(SUPER_ADMIN), userRoutes);
 
-// Super admin + admins: configure the portal and run day-to-day bookings and expenditure.
+// Super admin + admins: configure the portal and run day-to-day bookings and expenses.
 router.use('/dashboard', authenticate, operations, dashboardRoutes);
 router.use('/metadata', authenticate, operations, metadataRoutes);
 router.use('/sevas', authenticate, operations, sevaRoutes);

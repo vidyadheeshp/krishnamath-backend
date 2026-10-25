@@ -23,7 +23,7 @@ const getDashboard = async (_req, res) => {
     analytics: {
       monthlyRevenue: [
         { label: 'Bookings', value: totals.monthlyCollectionAmount },
-        { label: 'Expenditure', value: totals.totalExpenditures },
+        { label: 'Expense', value: totals.totalExpenditures },
         { label: 'Net', value: totals.monthlyCollectionAmount - totals.totalExpenditures },
       ],
       popularSevas: totals.popularSevas,

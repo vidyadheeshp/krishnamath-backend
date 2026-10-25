@@ -6,7 +6,7 @@ const { HttpError } = require('../utils/httpError');
 const { sendResponse } = require('../utils/response');
 
 const listExpenditures = async (_req, res) => {
-  return sendResponse(res, 200, 'Expenditures fetched successfully', await repo.listExpenditures(db));
+  return sendResponse(res, 200, 'Expenses fetched successfully', await repo.listExpenditures(db));
 };
 
 const createExpenditure = async (req, res) => {
@@ -26,7 +26,7 @@ const createExpenditure = async (req, res) => {
     await repo.insertAuditLog(client, 'CREATE', 'expenditure', expenditure, req.user.email);
   });
 
-  return sendResponse(res, 201, 'Expenditure created successfully', expenditure);
+  return sendResponse(res, 201, 'Expense created successfully', expenditure);
 };
 
 const updateExpenditure = async (req, res) => {
@@ -34,7 +34,7 @@ const updateExpenditure = async (req, res) => {
     const existing = await repo.findExpenditure(client, req.params.id, { forUpdate: true });
 
     if (!existing) {
-      throw new HttpError(404, 'Expenditure not found', [req.params.id]);
+      throw new HttpError(404, 'Expense not found', [req.params.id]);
     }
 
     const updated = {
@@ -53,7 +53,7 @@ const updateExpenditure = async (req, res) => {
     return updated;
   });
 
-  return sendResponse(res, 200, 'Expenditure updated successfully', expenditure);
+  return sendResponse(res, 200, 'Expense updated successfully', expenditure);
 };
 
 const deleteExpenditure = async (req, res) => {
@@ -61,7 +61,7 @@ const deleteExpenditure = async (req, res) => {
     const existing = await repo.findExpenditure(client, req.params.id, { forUpdate: true });
 
     if (!existing) {
-      throw new HttpError(404, 'Expenditure not found', [req.params.id]);
+      throw new HttpError(404, 'Expense not found', [req.params.id]);
     }
 
     await repo.deleteExpenditure(client, existing.id);
@@ -69,7 +69,7 @@ const deleteExpenditure = async (req, res) => {
     return existing;
   });
 
-  return sendResponse(res, 200, 'Expenditure deleted successfully', removed);
+  return sendResponse(res, 200, 'Expense deleted successfully', removed);
 };
 
 module.exports = { listExpenditures, createExpenditure, updateExpenditure, deleteExpenditure };
